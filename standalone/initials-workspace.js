@@ -45,6 +45,7 @@
   // Expiry/revocation and account switching must stop an already-open workspace.
   const expectedAccount=window.ORWebsiteAccount;
   let checking=false, connectionDialog=null, priorFocus=null;
+  let connectionEpoch=0;
   function showConnectionProblem() {
     if(!connectionDialog){
       connectionDialog=document.createElement('dialog');
@@ -62,6 +63,7 @@
   async function checkSession() {
     if(checking)return;checking=true;
     if(connectionDialog?.open){connectionDialog.querySelector('button').disabled=true;document.getElementById('connectionStatus').textContent='Checking connection…'}
+    const epoch=connectionEpoch;
     try {
       const response=await fetch('/api/session',{cache:'no-store',signal:AbortSignal.timeout(15000)});
       if(response.status===401 || response.status===403){
@@ -69,13 +71,15 @@
       }
       if(!response.ok)throw Error('Connection unavailable');
       const user=await response.json();
-      if(user.status!=='approved' || (expectedAccount && user.id!==expectedAccount)) {
+      if(!expectedAccount || user.id!==expectedAccount || user.status!=='approved' || !['member','owner'].includes(user.role)) {
         document.body.inert=true;document.body.style.visibility='hidden';location.replace('/account');return;
       }
+      if(epoch!==connectionEpoch)return;
       if(connectionDialog?.open){connectionDialog.close();if(priorFocus?.isConnected)priorFocus.focus()}
     } catch (_) {showConnectionProblem()}
     finally {checking=false}
   }
+  addEventListener('offline',()=>{connectionEpoch++;showConnectionProblem()});
   addEventListener('online',checkSession);
   checkSession();setInterval(checkSession,30000);
   addEventListener('focus',checkSession);

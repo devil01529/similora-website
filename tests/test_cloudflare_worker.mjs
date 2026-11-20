@@ -1,3 +1,4 @@
+import {execFileSync} from 'node:child_process';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFile} from 'node:fs/promises';
@@ -31,6 +32,28 @@ assert.equal(ownerLogin.status,200);const owner=ownerLogin.headers.get('set-cook
 assert.equal((await (await call('/api/session',undefined,owner)).json()).id,ownerId);
 const rows=await (await call('/api/accounts',undefined,owner)).json();assert.equal(rows.length,1);
 assert.equal((await call('/api/decision',{id:rows[0].id,status:'approved'},owner,'https://evil.invalid')).status,403);
+// Two independent sign-ins share a member row, never a cookie or client grant.
+const phoneLogin=await call('/api/login',{email:'member@example.invalid',password:'synthetic-member-password'});
+const phone=phoneLogin.headers.get('set-cookie').split(';')[0];
+assert.notEqual(phone,member);
+for(const state of ['pending','approved','rejected','approved','revoked']){
+  if(state!=='pending')assert.equal((await call('/api/decision',{id:rows[0].id,status:state},owner)).status,200);
+  const allowed=state==='approved';
+  for(const session of [phone,member]){
+    const response=await call('/api/session',undefined,session);
+    assert.equal(response.status,200);
+    const account=await response.json();
+    assert.equal(account.id,rows[0].id);
+    assert.equal(account.status,state);
+    assert.equal(account.role,'member');
+    assert.equal((await call('/workspace/',undefined,session)).status,allowed?200:403);
+    if(process.env.ANDROID_POLICY_CLASSES)
+      execFileSync('java',['-cp',process.env.ANDROID_POLICY_CLASSES,'org.similora.app.SessionPolicyCheck',account.id,account.role,account.status,String(allowed)]);
+  }
+}
+assert.equal((await call('/api/logout',{},phone)).status,200);
+assert.equal((await call('/api/session',undefined,phone)).status,401);
+assert.equal((await call('/api/session',undefined,member)).status,200);
 assert.equal((await call('/api/decision',{id:rows[0].id,status:'approved'},owner)).status,200);
 assert.equal((await call('/workspace/',undefined,member)).status,200);
 assert.equal(await (await call('/workspace/js/case-policy.js',undefined,member)).text(),rows[0].id);
